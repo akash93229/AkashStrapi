@@ -1,4 +1,3 @@
-# provider.tf
 terraform {
   required_version = ">= 1.0.0"
 
@@ -10,10 +9,10 @@ terraform {
   }
 
   backend "s3" {
-    bucket         = var.s3_bucket_name
+    bucket         = "my-strapi-terraform-state"     # HARD CODE
     key            = "terraform.tfstate"
-    region         = var.region
-    dynamodb_table = var.dynamodb_table
+    region         = "ap-south-1"                    # HARD CODE
+    dynamodb_table = "terraform-state-lock"          # HARD CODE
   }
 }
 
