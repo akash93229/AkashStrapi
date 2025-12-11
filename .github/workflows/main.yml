@@ -7,70 +7,45 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
 
     env:
       AWS_REGION: ap-south-1
       ECR_REPO: my-strapi-app
-      STRAPI_DIR: ./my-strapi-app
-      TERRAFORM_DIR: ./terraform
 
     steps:
-
-      # 1) Checkout Repo
-      - name: Checkout repository
+      - name: Checkout Repo
         uses: actions/checkout@v3
 
-      # 2) Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 20
 
-      # 3) Install Strapi dependencies
-      - name: Install dependencies
-        working-directory: ${{ env.STRAPI_DIR }}
+      - name: Install Dependencies
+        working-directory: ./my-strapi-app
         run: npm install
 
-      # 4) Build Strapi
       - name: Build Strapi
-        working-directory: ${{ env.STRAPI_DIR }}
+        working-directory: ./my-strapi-app
         run: npm run build
 
-      # 5) Configure AWS Credentials
-      - name: Configure AWS credentials
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ap-south-1
 
-      # 6) Login to ECR
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v1
 
-      # 7) Build Docker Image
-      - name: Build Docker image
+      - name: Build Docker Image
         run: |
-          docker build -t $ECR_REPO ${{ env.STRAPI_DIR }}
-          docker tag $ECR_REPO:latest ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/$ECR_REPO:latest
+          docker build -t $ECR_REPO ./my-strapi-app
+          docker tag $ECR_REPO:latest ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.ap-south-1.amazonaws.com/$ECR_REPO:latest
 
-      # 8) Push Docker image to ECR
-      - name: Push Docker image
+      - name: Push Docker Image
         run: |
-          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/$ECR_REPO:latest
-
-      # 9) Setup Terraform
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-
-      # 10) Terraform Init
-      - name: Terraform Init
-        working-directory: ${{ env.TERRAFORM_DIR }}
-        run: terraform init
-
-      # 11) Terraform Apply
-      - name: Terraform Apply
-        working-directory: ${{ env.TERRAFORM_DIR }}
-        run: terraform apply -auto-approve
+          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.ap-south-1.amazonaws.com/$ECR_REPO:latest
