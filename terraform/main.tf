@@ -1,46 +1,87 @@
-# ==========================
-# PROVIDER
-# ==========================
-provider "aws" {
-  region = "ap-south-1"
+# main.tf
+
+########################
+# VPC
+########################
+
+resource "aws_vpc" "main" {
+  cidr_block = "10.0.0.0/16"
+  tags = {
+    Name = "strapi-vpc"
+  }
 }
 
-# ==========================
-# GENERATE SSH KEY FOR EC2
-# ==========================
-resource "tls_private_key" "strapi_key" {
-  algorithm = "RSA"
-  rsa_bits  = 2048
+########################
+# Subnets
+########################
+
+resource "aws_subnet" "public" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.1.0/24"
+  availability_zone       = "${var.region}a"
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "public-subnet"
+  }
 }
 
-resource "aws_key_pair" "strapi_key" {
-  key_name   = "strapi-key"
-  public_key = tls_private_key.strapi_key.public_key_openssh
+resource "aws_subnet" "private" {
+  count             = 2
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = cidrsubnet(aws_vpc.main.cidr_block, 8, count.index + 10)
+  availability_zone = "${var.region}${count.index == 0 ? "a" : "b"}"
+
+  tags = {
+    Name = "private-subnet-${count.index}"
+  }
 }
 
-output "private_key_pem" {
-  value     = tls_private_key.strapi_key.private_key_pem
-  sensitive = true
+########################
+# INTERNET GATEWAY
+########################
+
+resource "aws_internet_gateway" "igw" {
+  vpc_id = aws_vpc.main.id
+
+  tags = {
+    Name = "strapi-igw"
+  }
 }
 
-# ==========================
+########################
+# PUBLIC ROUTE TABLE
+########################
+
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.igw.id
+  }
+
+  tags = {
+    Name = "public-route"
+  }
+}
+
+resource "aws_route_table_association" "public_assoc" {
+  subnet_id      = aws_subnet.public.id
+  route_table_id = aws_route_table.public.id
+}
+
+########################
 # SECURITY GROUPS
-# ==========================
+########################
+
 resource "aws_security_group" "ec2_sg" {
-  name        = "strapi-ec2-sg"
-  description = "Allow SSH, HTTP, Strapi"
-  vpc_id      = aws_vpc.main.id
+  name   = "ec2-sg"
+  vpc_id = aws_vpc.main.id
 
   ingress {
     from_port   = 22
     to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    from_port   = 80
-    to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -60,108 +101,58 @@ resource "aws_security_group" "ec2_sg" {
   }
 
   tags = {
-    Name = "strapi-ec2-sg"
+    Name = "ec2-sg"
   }
 }
 
-resource "aws_security_group" "rds_sg" {
-  name        = "strapi-rds-sg"
-  description = "RDS security group"
-  vpc_id      = aws_vpc.main.id
+########################
+# EC2
+########################
 
-  ingress {
-    from_port       = 5432
-    to_port         = 5432
-    protocol        = "tcp"
-    security_groups = [aws_security_group.ec2_sg.id]
-  }
+resource "aws_instance" "ec2" {
+  ami                    = var.ami_id
+  instance_type          = "t2.micro"
+  subnet_id              = aws_subnet.public.id
+  vpc_security_group_ids = [aws_security_group.ec2_sg.id]
+  key_name               = var.key_name
 
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+  user_data = file("userdata.sh")
 
   tags = {
-    Name = "strapi-rds-sg"
+    Name = "strapi-ec2"
   }
 }
 
-# ==========================
-# RDS SUBNET GROUP
-# ==========================
+########################
+# DB SUBNET GROUP
+########################
+
 resource "aws_db_subnet_group" "db_subnets" {
   name       = "strapi-db-subnets"
-  subnet_ids = [
-    aws_subnet.private_subnet1.id,
-    aws_subnet.private_subnet2.id
-  ]
+  subnet_ids = aws_subnet.private[*].id
 
   tags = {
-    Name = "db-subnet-group"
+    Name = "strapi-db-subnet-group"
   }
 }
 
-# ==========================
-# RDS INSTANCE
-# ==========================
+########################
+# RDS
+########################
+
 resource "aws_db_instance" "strapi_db" {
-  identifier             = "strapi-db"
-  engine                 = "postgres"
-  engine_version         = "15"
-  instance_class         = "db.t3.micro"
-  allocated_storage      = 20
-  username               = "strapi"
-  password               = "Strapi1234"
-  db_subnet_group_name   = aws_db_subnet_group.db_subnets.name
-  vpc_security_group_ids = [aws_security_group.rds_sg.id]
-  skip_final_snapshot    = true
-  publicly_accessible    = false
-}
-
-# ==========================
-# EC2 INSTANCE
-# ==========================
-resource "aws_instance" "strapi_ec2" {
-  ami                         = "ami-0dee22c13ea7a9a67" # update if needed
-  instance_type               = "t2.micro"
-  subnet_id                   = aws_subnet.public_subnet.id
-  key_name                    = aws_key_pair.strapi_key.key_name
-  vpc_security_group_ids       = [aws_security_group.ec2_sg.id]
-  associate_public_ip_address = true
+  identifier              = "strapi-db"
+  engine                  = "postgres"
+  instance_class          = "db.t3.micro"
+  username                = var.db_username
+  password                = var.db_password
+  allocated_storage       = 20
+  publicly_accessible     = false
+  skip_final_snapshot     = true
+  db_subnet_group_name    = aws_db_subnet_group.db_subnets.name
+  vpc_security_group_ids  = [aws_security_group.ec2_sg.id]
 
   tags = {
-    Name = "Strapi-EC2"
+    Name = "strapi-rds"
   }
-}
-
-# ==========================
-# OUTPUTS
-# ==========================
-output "ec2_public_ip" {
-  value = aws_instance.strapi_ec2.public_ip
-}
-
-output "rds_endpoint" {
-  value = aws_db_instance.strapi_db.endpoint
-}
-
-output "db_subnet_group_name" {
-  value = aws_db_subnet_group.db_subnets.name
-}
-
-output "public_subnet_id" {
-  value = aws_subnet.public_subnet.id
-}
-
-output "private_subnet_ids" {
-  value = [
-    aws_subnet.private_subnet1.id,
-    aws_subnet.private_subnet2.id
-  ]
-}
-
-output "vpc_id" {
-  value = aws_vpc.main.id
 }
